@@ -1,125 +1,136 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useCamera from '../hooks/useCamera.jsx';
-import useTTS from '../hooks/useTTS.jsx';
 import { extractText } from '../services/geminiService.js';
+
+const ANALYZE_INTERVAL_MS = 5000;
 
 export default function OCRReader() {
   const { videoRef, start, stop, captureFrame, ready, error: camError } = useCamera('environment');
-  const { speak, stop: stopSpeech, speaking } = useTTS();
-  const fileInputRef = useRef(null);
 
-  const [image, setImage] = useState(null);
-  const [cameraOn, setCameraOn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
   const [apiError, setApiError] = useState('');
+  const [snapshot, setSnapshot] = useState(null);
+  const [speaking, setSpeaking] = useState(false);
 
-  const toggleCamera = async () => {
-    if (cameraOn) {
-      stop();
-      setCameraOn(false);
-    } else {
-      await start();
-      setCameraOn(true);
-    }
-  };
+  const intervalRef = useRef(null);
+  const loadingRef = useRef(false);
+  const pendingTextRef = useRef(null);
+  const speakingRef = useRef(false);
 
-  const handleCapture = () => {
-    const frame = captureFrame();
-    if (frame) {
-      setImage(frame);
-      setText('');
-      setApiError('');
-    }
-  };
+  const speakText = (str) => {
+    if (!str || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(str);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.lang = 'en-US';
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImage(reader.result);
-      setText('');
-      setApiError('');
+    utterance.onstart = () => { setSpeaking(true); speakingRef.current = true; };
+    utterance.onend = () => {
+      speakingRef.current = false;
+      setSpeaking(false);
+      if (pendingTextRef.current) {
+        const next = pendingTextRef.current;
+        pendingTextRef.current = null;
+        speakText(next);
+      }
     };
-    reader.readAsDataURL(file);
+    utterance.onerror = () => { speakingRef.current = false; setSpeaking(false); };
+    window.speechSynthesis.speak(utterance);
   };
 
-  const handleExtract = async () => {
-    if (!image) return;
+  const queueSpeak = (str) => {
+    if (speakingRef.current) {
+      pendingTextRef.current = str;
+    } else {
+      speakText(str);
+    }
+  };
+
+  const analyze = async () => {
+    if (loadingRef.current) return;
+    const frame = captureFrame();
+    if (!frame) return;
+
+    loadingRef.current = true;
     setLoading(true);
+    setSnapshot(frame);
     setApiError('');
-    setText('');
+
     try {
-      const result = await extractText(image);
-      setText(result);
-      speak(result);
+      const result = await extractText(frame);
+      // Only update if text actually changed
+      setText((prev) => {
+        if (result !== prev) queueSpeak(result);
+        return result;
+      });
     } catch (e) {
       setApiError(e.message);
-      speak('Sorry, I could not read the text in this image.');
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    start();
+    return () => {
+      stop();
+      window.speechSynthesis?.cancel();
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    analyze();
+    intervalRef.current = setInterval(analyze, ANALYZE_INTERVAL_MS);
+    return () => clearInterval(intervalRef.current);
+  }, [ready]);
 
   return (
     <div className="space-y-5">
       <h2 className="text-2xl font-extrabold text-gray-900">OCR Reader</h2>
       <p className="text-base text-gray-600">
-        Capture or upload a photo of text — Sensei will read it aloud and show it in large print.
+        Point at any text — Sensei reads it aloud every {ANALYZE_INTERVAL_MS / 1000} seconds.
       </p>
 
-      <div className="bg-black rounded-3xl overflow-hidden aspect-[4/3] flex items-center justify-center">
-        {cameraOn ? (
-          <video ref={videoRef} className="w-full h-full object-cover" playsInline muted aria-label="Camera preview" />
-        ) : image ? (
-          <img src={image} alt="Captured document or text" className="w-full h-full object-contain" />
-        ) : (
-          <span className="text-white text-lg">No image yet</span>
+      <div className="bg-black rounded-3xl overflow-hidden aspect-[4/3] relative">
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover"
+          playsInline
+          muted
+          aria-label="Live camera preview"
+        />
+        {/* Live indicator */}
+        <div className="absolute top-3 right-3 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1">
+          <span className={`w-3 h-3 rounded-full ${ready ? 'bg-red-500 recording-pulse' : 'bg-gray-400'}`} />
+          <span className="text-white text-sm font-bold">{ready ? 'Live' : 'Starting…'}</span>
+        </div>
+        {/* Speaking indicator */}
+        {speaking && (
+          <div className="absolute bottom-3 left-3 right-3 flex items-center gap-2 bg-black/60 rounded-full px-4 py-2">
+            <span className="text-yellow-400 text-lg">🔊</span>
+            <span className="text-white text-sm font-bold recording-pulse">Speaking…</span>
+          </div>
+        )}
+        {loading && !speaking && (
+          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-center bg-black/40 rounded-full px-4 py-2">
+            <span className="text-white text-sm font-bold">Reading…</span>
+          </div>
+        )}
+        {!ready && !camError && (
+          <div className="absolute inset-0 flex items-center justify-center text-white text-lg">
+            Starting camera…
+          </div>
         )}
       </div>
 
-      {camError && <p role="alert" className="text-red-600 font-semibold">{camError}</p>}
-
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          onClick={toggleCamera}
-          className="p-4 rounded-2xl bg-sensei-teal text-white text-lg font-bold shadow active:scale-95 transition"
-        >
-          {cameraOn ? '🛑 Stop Camera' : '📷 Open Camera'}
-        </button>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="p-4 rounded-2xl bg-sensei-orange text-white text-lg font-bold shadow active:scale-95 transition"
-        >
-          🖼️ Upload Image
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          className="hidden"
-          aria-label="Upload image file"
-        />
-      </div>
-
-      {cameraOn && ready && (
-        <button
-          onClick={handleCapture}
-          className="w-full p-4 rounded-2xl bg-sensei-purple text-white text-xl font-bold shadow active:scale-95 transition"
-        >
-          📸 Capture Photo
-        </button>
+      {camError && (
+        <p role="alert" className="text-red-600 font-semibold">{camError}</p>
       )}
-
-      <button
-        onClick={handleExtract}
-        disabled={!image || loading}
-        className="w-full p-5 rounded-2xl bg-sensei-pink text-white text-xl font-extrabold shadow disabled:opacity-50 active:scale-95 transition"
-      >
-        {loading ? '⏳ Reading...' : '📖 Extract & Read Text'}
-      </button>
 
       {apiError && (
         <div role="alert" className="p-4 bg-red-100 border-2 border-red-400 rounded-2xl text-red-800 font-semibold">
@@ -129,14 +140,13 @@ export default function OCRReader() {
 
       {text && (
         <div className="p-5 bg-white rounded-2xl shadow-lg space-y-3" role="status" aria-live="polite">
-          <h3 className="text-lg font-bold text-gray-800">Extracted Text</h3>
+          {snapshot && (
+            <img src={snapshot} alt="Last analyzed frame" className="w-full rounded-2xl object-contain max-h-48" />
+          )}
+          <h3 className="text-lg font-bold text-gray-800">
+            {loading ? '🔄 Updating…' : '✅ Extracted Text'}
+          </h3>
           <p className="text-xxl leading-relaxed font-semibold text-gray-900 whitespace-pre-wrap">{text}</p>
-          <button
-            onClick={() => (speaking ? stopSpeech() : speak(text))}
-            className="px-5 py-3 rounded-xl bg-sensei-blue text-white font-bold shadow active:scale-95 transition"
-          >
-            {speaking ? '🔇 Stop Reading' : '🔊 Read Aloud'}
-          </button>
         </div>
       )}
     </div>
