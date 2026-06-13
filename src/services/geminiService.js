@@ -46,7 +46,22 @@ async function callGemini(base64Image, mimeType, prompt) {
 const PROMPTS = {
   scene: 'Describe this scene in 2-3 clear, concise sentences for a visually impaired person. Focus on layout, people, objects, and any potential hazards.',
   groceries: 'Identify all grocery or food items visible in this image. List each item name clearly and briefly mention quantity or packaging if visible. Keep it short and spoken-friendly.',
-  clothing: 'Describe the clothing items visible in this image, including type, color, and pattern. Mention if items appear to match or any notable details for someone who cannot see them.',
+  clothing: `Describe the clothing in detail.
+
+For each clothing item identify:
+- Type of clothing
+- Primary and secondary colors
+- Patterns (stripes, checks, plaid, floral, polka dots, prints)
+- Logos, graphics, brands, or text
+- Texture or material if visible
+- Accessories being worn
+- Whether items appear to match
+
+Be specific. Do not simply say "blue shirt".
+Instead say things like:
+"light blue button-down shirt with thin white vertical stripes"
+or
+"black T-shirt with a large white logo on the chest".`,
   ocr: 'Extract all readable text from this image exactly as it appears, preserving line breaks. If there is no text, respond with "No text detected."'
 };
 
