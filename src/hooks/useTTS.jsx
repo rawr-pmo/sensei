@@ -6,6 +6,12 @@ export default function useTTS() {
 
   const speak = useCallback((text, opts = {}) => {
     if (!('speechSynthesis' in window) || !text) return;
+    const cleanText = text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/#/g, '')
+    .replace(/^\s*\d+\.\s*/gm, '')
+    .trim();
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);

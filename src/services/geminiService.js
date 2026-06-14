@@ -16,16 +16,16 @@ async function callGemini(base64Image, mimeType, prompt) {
       {
         parts: [
           { text: prompt },
-          { inline_data: { mime_type: mimeType, data: base64Image } }
+          { inlineData: { mimeType: mimeType, data: base64Image } }
         ]
       }
     ],
     generationConfig: {
       temperature: 0.4,
-      maxOutputTokens: 512
+      maxOutputTokens: 1024
     }
   };
-
+console.log(JSON.stringify(body, null, 2));
   const response = await fetch(GEMINI_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -38,15 +38,48 @@ async function callGemini(base64Image, mimeType, prompt) {
   }
 
   const data = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join(' ');
-  if (!text) throw new Error('No response received from Gemini.');
-  return text.trim();
+
+console.log("FULL GEMINI RESPONSE:", data);
+console.log("PARTS:", data?.candidates?.[0]?.content?.parts);
+console.log("FINISH REASON:", data?.candidates?.[0]?.finishReason);
+
+const text =
+  data?.candidates?.[0]?.content?.parts
+    ?.map(part => part.text || "")
+    .join("\n");
+
+console.log("EXTRACTED TEXT:", text);
+
+if (!text) {
+  throw new Error('No response received from Gemini.');
+}
+
+const cleanText = text
+  .replace(/\*\*/g, '')
+  .replace(/\*/g, '')
+  .replace(/#/g, '')
+  .replace(/`/g, '')
+  .replace(/^\s*[-•]\s*/gm, '')
+  .replace(/^\s*\d+\.\s*/gm, '')
+  .trim();
+
+console.log("CLEAN TEXT:", cleanText);
+
+return cleanText;
 }
 
 const PROMPTS = {
   scene: 'Describe this scene in 2-3 clear, concise sentences for a visually impaired person. Focus on layout, people, objects, and any potential hazards.',
   groceries: 'Identify all grocery or food items visible in this image. List each item name clearly and briefly mention quantity or packaging if visible. Keep it short and spoken-friendly.',
   clothing: `Describe the clothing in detail.
+
+  Use plain sentences only.
+Do NOT use markdown.
+Do NOT use asterisks, bullet points, numbering, or headings.
+Do NOT use bold text.
+
+Never use:
+*, **, #, bullet points, lists, numbering, markdown, or headings.
 
 For each clothing item identify:
 - Type of clothing
